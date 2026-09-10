@@ -1,82 +1,70 @@
-// This service acts as the central data layer for the application.
-// All mock data and API fetch functions reside here as per requirements.
+const API_BASE_URL = 'http://localhost:8080/api/v1';
 
-const mockData = {
-  investorDetails: {
-    name: "John Doe",
-    age: 68,
-    totalBalance: 125000,
-  },
-  products: [
-    {
-      id: "prod-1",
-      name: "Retirement Fund",
-      type: "RETIREMENT",
-      balance: 100000,
-      initialInvestment: 90000,
-    },
-    {
-      id: "prod-2",
-      name: "Standard Savings",
-      type: "SAVINGS",
-      balance: 25000,
-      initialInvestment: 26000,
+// Helper to handle API responses
+const handleResponse = async (response) => {
+  if (!response.ok) {
+    let errorMessage = 'Network response was not ok';
+    try {
+      const errorData = await response.json();
+      // Combine validation error messages if they exist
+      if (errorData && typeof errorData === 'object') {
+        const errors = Object.values(errorData);
+        if (errors.length > 0) {
+            errorMessage = errors.join(', ');
+        } else if (errorData.error) {
+            errorMessage = errorData.error;
+        }
+      }
+    } catch (e) {
+      // Fallback to text or default message
     }
-  ],
-  withdrawalHistory: [
-    {
-      id: "w-1",
-      date: "2023-01-15",
-      product: "Retirement Fund",
-      amount: 5000,
-      status: "COMPLETED"
-    },
-    {
-      id: "w-2",
-      date: "2023-06-20",
-      product: "Standard Savings",
-      amount: 1000,
-      status: "COMPLETED"
-    }
-  ]
+    throw new Error(errorMessage);
+  }
+  return response.json();
 };
 
-// Simulate API delay
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
 export const getInvestorDetails = async () => {
-  await delay(500);
-  return mockData.investorDetails;
+  const data = await fetch(`${API_BASE_URL}/portfolio`).then(handleResponse);
+  return {
+    name: data.investorName,
+    age: data.investorAge,
+    totalBalance: data.totalBalance
+  };
 };
 
 export const getProducts = async () => {
-  await delay(500);
-  return mockData.products;
+  const data = await fetch(`${API_BASE_URL}/portfolio`).then(handleResponse);
+  return data.products;
 };
 
 export const getWithdrawalHistory = async () => {
-  await delay(500);
-  return mockData.withdrawalHistory;
+  const data = await fetch(`${API_BASE_URL}/portfolio`).then(handleResponse);
+  return data.withdrawalHistory;
 };
 
 export const submitWithdrawal = async (withdrawalData) => {
-  await delay(500);
-  // Simulating the withdrawal successfully being processed
-  const newWithdrawal = {
-    id: `w-${Date.now()}`,
-    date: new Date().toISOString().split('T')[0],
-    product: withdrawalData.productName,
-    amount: withdrawalData.amount,
-    status: "COMPLETED"
-  };
-  mockData.withdrawalHistory.push(newWithdrawal);
+  const response = await fetch(`${API_BASE_URL}/withdrawals`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      productId: withdrawalData.productId,
+      amount: withdrawalData.amount
+    }),
+  });
+  
+  return handleResponse(response);
+};
 
-  // Update the balance in mock data
-  const product = mockData.products.find(p => p.id === withdrawalData.productId);
-  if (product) {
-    product.balance -= withdrawalData.amount;
-    mockData.investorDetails.totalBalance -= withdrawalData.amount;
+export const exportWithdrawalsCsv = (fromDate, toDate) => {
+  let url = `${API_BASE_URL}/withdrawals/export`;
+  const params = new URLSearchParams();
+  if (fromDate) params.append('fromDate', fromDate);
+  if (toDate) params.append('toDate', toDate);
+  if (params.toString()) {
+    url += `?${params.toString()}`;
   }
-
-  return newWithdrawal;
+  // Directly open the export endpoint which triggers a file download in the browser
+  window.open(url, '_blank');
 };

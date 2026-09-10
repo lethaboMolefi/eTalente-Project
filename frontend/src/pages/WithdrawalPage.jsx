@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getInvestorDetails, getProducts, getWithdrawalHistory, submitWithdrawal } from '../services/apiService';
+import { getInvestorDetails, getProducts, getWithdrawalHistory, submitWithdrawal, exportWithdrawalsCsv } from '../services/apiService';
 
 export default function WithdrawalPage() {
   const navigate = useNavigate();
@@ -12,34 +12,79 @@ export default function WithdrawalPage() {
     }
   }, [location, navigate]);
 
+  // Global data state populated from the backend
   const [investor, setInvestor] = useState(null);
   const [products, setProducts] = useState([]);
   const [history, setHistory] = useState([]);
 
+  // Form management state for the active withdrawal
   const [selectedProductId, setSelectedProductId] = useState('');
   const [amount, setAmount] = useState('');
+  
+  // Validation state array to track multiple simultaneous errors
   const [errors, setErrors] = useState([]);
+  const [fetchError, setFetchError] = useState(null);
 
+  // Advanced UI state for controlling the CSV export dropdown and filters
+  const [dateFilterType, setDateFilterType] = useState('ALL'); // ALL, TODAY, CUSTOM
   const [showExportOptions, setShowExportOptions] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
+  const getFilteredDates = () => {
+    let filterStart = '';
+    let filterEnd = '';
+    if (dateFilterType === 'TODAY') {
+      const today = new Date().toISOString().split('T')[0];
+      filterStart = today;
+      filterEnd = today;
+    } else if (dateFilterType === 'CUSTOM') {
+      filterStart = fromDate;
+      filterEnd = toDate;
+    }
+    return { filterStart, filterEnd };
+  };
+
+  const filteredHistory = history.filter(item => {
+    const { filterStart, filterEnd } = getFilteredDates();
+    if (filterStart && item.date < filterStart) return false;
+    if (filterEnd && item.date > filterEnd) return false;
+    return true;
+  });
+
+  const handleExport = () => {
+    const { filterStart, filterEnd } = getFilteredDates();
+    exportWithdrawalsCsv(filterStart, filterEnd);
+  };
+
   useEffect(() => {
     const fetchAllData = async () => {
-      const invData = await getInvestorDetails();
-      const prodData = await getProducts();
-      const histData = await getWithdrawalHistory();
-      
-      setInvestor(invData);
-      setProducts(prodData);
-      setHistory(histData);
+      try {
+        const invData = await getInvestorDetails();
+        const prodData = await getProducts();
+        const histData = await getWithdrawalHistory();
+        
+        setInvestor(invData);
+        setProducts(prodData);
+        setHistory(histData);
 
-      if (prodData.length > 0) {
-        setSelectedProductId(prodData[0].id);
+        if (prodData.length > 0) {
+          setSelectedProductId(prodData[0].id);
+        }
+      } catch (err) {
+        setFetchError(err.message || 'Failed to connect to backend.');
       }
     };
     fetchAllData();
   }, []);
+
+  if (fetchError) {
+    return (
+      <div className="flex justify-center items-center h-64 text-red-500 font-medium">
+        Error: {fetchError} (Make sure the Spring Boot backend is running on port 8080)
+      </div>
+    );
+  }
 
   if (!investor || products.length === 0) {
     return (
@@ -54,7 +99,9 @@ export default function WithdrawalPage() {
     setErrors([]);
     const validationErrors = [];
     const withdrawAmount = parseFloat(amount);
-    const product = products.find(p => p.id === selectedProductId);
+    
+    // Explicit type-safe comparison to find the correct product
+    const product = products.find(p => p.id.toString() === selectedProductId.toString());
 
     if (!product) {
       validationErrors.push("Invalid product selected.");
@@ -62,12 +109,15 @@ export default function WithdrawalPage() {
       if (isNaN(withdrawAmount) || withdrawAmount <= 0) {
         validationErrors.push("Please enter a valid withdrawal amount.");
       } else {
+        // Business Rule 1: Age boundary for Retirement products
         if (product.type === "RETIREMENT" && investor.age <= 65) {
           validationErrors.push("Retirement withdrawals only allowed if age > 65.");
         }
+        // Business Rule 2: Strict Overdraft Protection
         if (withdrawAmount > product.balance) {
           validationErrors.push("Withdrawal must not exceed balance.");
         }
+        // Business Rule 3: 90% withdrawal maximum threshold
         if (withdrawAmount > (product.balance * 0.9)) {
           validationErrors.push("Withdrawal must not exceed 90% of balance.");
         }
@@ -79,18 +129,22 @@ export default function WithdrawalPage() {
       return;
     }
 
-    const result = await submitWithdrawal({
-      productId: product.id,
-      productName: product.name,
-      amount: withdrawAmount
-    });
+    try {
+      const result = await submitWithdrawal({
+        productId: product.id,
+        productName: product.name,
+        amount: withdrawAmount
+      });
 
-    if (result) {
-      const updatedProdData = await getProducts();
-      const updatedHistData = await getWithdrawalHistory();
-      setProducts(updatedProdData);
-      setHistory(updatedHistData);
-      setAmount('');
+      if (result) {
+        const updatedProdData = await getProducts();
+        const updatedHistData = await getWithdrawalHistory();
+        setProducts(updatedProdData);
+        setHistory(updatedHistData);
+        setAmount('');
+      }
+    } catch (error) {
+      setErrors([error.message]);
     }
   };
 
@@ -137,7 +191,7 @@ export default function WithdrawalPage() {
                     >
                       {products.map(p => (
                         <option key={p.id} value={p.id}>
-                          {p.name} (${p.balance.toLocaleString()})
+                          {p.name} (R{p.balance.toLocaleString()})
                         </option>
                       ))}
                     </select>
@@ -146,7 +200,7 @@ export default function WithdrawalPage() {
 
                 <div>
                   <label htmlFor="amount" className="block text-sm font-medium leading-6 text-gray-900">
-                    Amount ($)
+                    Amount (R)
                   </label>
                   <div className="mt-2">
                     <input 
@@ -207,31 +261,50 @@ export default function WithdrawalPage() {
               }`}
             >
               <div className="p-5 flex flex-col sm:flex-row items-end gap-4">
-                <div className="w-full sm:w-auto flex-1">
-                  <label htmlFor="fromDate" className="block text-xs font-medium text-gray-500 mb-1">From Date</label>
-                  <input 
-                    type="date" 
-                    id="fromDate"
-                    value={fromDate} 
-                    onChange={(e) => setFromDate(e.target.value)}
+                <div className="w-full sm:w-auto">
+                  <label htmlFor="dateFilterType" className="block text-xs font-medium text-gray-500 mb-1">Filter Range</label>
+                  <select
+                    id="dateFilterType"
+                    value={dateFilterType}
+                    onChange={(e) => setDateFilterType(e.target.value)}
                     className="block w-full rounded-md border-gray-300 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-blue-600 sm:text-sm bg-white shadow-sm"
-                  />
+                  >
+                    <option value="ALL">All Time</option>
+                    <option value="TODAY">Today</option>
+                    <option value="CUSTOM">Custom Range</option>
+                  </select>
                 </div>
-                <div className="w-full sm:w-auto flex-1">
-                  <label htmlFor="toDate" className="block text-xs font-medium text-gray-500 mb-1">To Date</label>
-                  <input 
-                    type="date" 
-                    id="toDate"
-                    value={toDate} 
-                    onChange={(e) => setToDate(e.target.value)}
-                    className="block w-full rounded-md border-gray-300 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-blue-600 sm:text-sm bg-white shadow-sm"
-                  />
-                </div>
+
+                {dateFilterType === 'CUSTOM' && (
+                  <>
+                    <div className="w-full sm:w-auto flex-1">
+                      <label htmlFor="fromDate" className="block text-xs font-medium text-gray-500 mb-1">From Date</label>
+                      <input 
+                        type="date" 
+                        id="fromDate"
+                        value={fromDate} 
+                        onChange={(e) => setFromDate(e.target.value)}
+                        className="block w-full rounded-md border-gray-300 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-blue-600 sm:text-sm bg-white shadow-sm"
+                      />
+                    </div>
+                    <div className="w-full sm:w-auto flex-1">
+                      <label htmlFor="toDate" className="block text-xs font-medium text-gray-500 mb-1">To Date</label>
+                      <input 
+                        type="date" 
+                        id="toDate"
+                        value={toDate} 
+                        onChange={(e) => setToDate(e.target.value)}
+                        className="block w-full rounded-md border-gray-300 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-blue-600 sm:text-sm bg-white shadow-sm"
+                      />
+                    </div>
+                  </>
+                )}
+
                 <button 
-                  onClick={() => alert('Download initiated...')}
+                  onClick={handleExport}
                   className="w-full sm:w-auto rounded-md bg-gray-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 transition-colors"
                 >
-                  Download
+                  Download CSV
                 </button>
               </div>
             </div>
@@ -247,11 +320,11 @@ export default function WithdrawalPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 bg-white">
-                  {history.map((item, idx) => (
+                  {filteredHistory.map((item, idx) => (
                     <tr key={item.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                       <td className="whitespace-nowrap py-4 pl-5 pr-3 text-sm text-gray-900">{item.date}</td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{item.product}</td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm font-medium text-gray-900 text-right">${item.amount.toLocaleString()}</td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm font-medium text-gray-900 text-right">R{item.amount.toLocaleString()}</td>
                       <td className="whitespace-nowrap px-5 py-4 text-sm">
                         <span className="inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
                           {item.status}
@@ -259,9 +332,9 @@ export default function WithdrawalPage() {
                       </td>
                     </tr>
                   ))}
-                  {history.length === 0 && (
+                  {filteredHistory.length === 0 && (
                     <tr>
-                      <td colSpan="4" className="py-8 text-center text-sm text-gray-500">No transactions found.</td>
+                      <td colSpan="4" className="py-8 text-center text-sm text-gray-500">No transactions found for this date range.</td>
                     </tr>
                   )}
                 </tbody>

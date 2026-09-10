@@ -3,20 +3,40 @@ import { getInvestorDetails, getProducts } from '../services/apiService';
 
 // Portfolio Page component serving as the Dashboard
 export default function PortfolioPage() {
+  // Core state management for the Portfolio view
+  // 'investor' and 'products' store the payload from our Spring Boot backend
   const [investor, setInvestor] = useState(null);
   const [products, setProducts] = useState([]);
+  
+  // UI state for toggling the privacy of the total balance
   const [showBalance, setShowBalance] = useState(true);
   const [dateFilter, setDateFilter] = useState('today');
+  
+  // Error state for handling network/fetch failures
+  const [error, setError] = useState(null);
 
+  // useEffect triggers the data fetch exactly once when the component mounts
   useEffect(() => {
     const fetchData = async () => {
-      const investorData = await getInvestorDetails();
-      const productsData = await getProducts();
-      setInvestor(investorData);
-      setProducts(productsData);
+      try {
+        const investorData = await getInvestorDetails();
+        const productsData = await getProducts();
+        setInvestor(investorData);
+        setProducts(productsData);
+      } catch (err) {
+        setError(err.message || 'Failed to connect to backend.');
+      }
     };
     fetchData();
   }, []);
+
+  if (error) {
+    return (
+      <div className="flex justify-center items-center h-64 text-red-500 font-medium">
+        Error: {error} (Make sure the Spring Boot backend is running on port 8080)
+      </div>
+    );
+  }
 
   if (!investor || products.length === 0) {
     return (
@@ -54,7 +74,7 @@ export default function PortfolioPage() {
           <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-1">Total Combined Balance</h2>
           <div className="flex items-center gap-4">
             <span className="text-4xl font-light text-gray-900">
-              {showBalance ? `$${investor.totalBalance.toLocaleString()}` : '****'}
+              {showBalance ? `R${investor.totalBalance.toLocaleString()}` : '****'}
             </span>
           </div>
         </div>
@@ -75,7 +95,7 @@ export default function PortfolioPage() {
               <div className="text-sm text-gray-500 font-medium mb-1">{product.type.replace('_', ' ')}</div>
               <h4 className="text-xl font-medium text-gray-900 mb-4">{product.name}</h4>
               <div className="text-2xl font-light text-gray-900">
-                ${product.balance.toLocaleString()}
+                R{product.balance.toLocaleString()}
               </div>
             </div>
           ))}
@@ -114,8 +134,8 @@ export default function PortfolioPage() {
                   <div>
                     <div className="font-medium text-gray-900">{product.name}</div>
                     <div className="text-sm text-gray-500 mt-1">
-                      Initial: ${product.initialInvestment.toLocaleString()} <span className="mx-2 text-gray-300">|</span> 
-                      Current: ${product.balance.toLocaleString()}
+                      Initial: R{product.initialInvestment.toLocaleString()} <span className="mx-2 text-gray-300">|</span> 
+                      Current: R{product.balance.toLocaleString()}
                     </div>
                   </div>
                   <div>

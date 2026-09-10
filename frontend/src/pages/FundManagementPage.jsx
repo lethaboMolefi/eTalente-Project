@@ -6,14 +6,27 @@ import { getInvestorDetails } from '../services/apiService';
 export default function FundManagementPage() {
   const navigate = useNavigate();
   const [investor, setInvestor] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchInvestor = async () => {
-      const data = await getInvestorDetails();
-      setInvestor(data);
+      try {
+        const data = await getInvestorDetails();
+        setInvestor(data);
+      } catch (err) {
+        setError(err.message || 'Failed to connect to backend.');
+      }
     };
     fetchInvestor();
   }, []);
+
+  if (error) {
+    return (
+      <div className="flex justify-center items-center h-64 text-red-500 font-medium">
+        Error: {error} (Make sure the Spring Boot backend is running on port 8080)
+      </div>
+    );
+  }
 
   if (!investor) {
     return (
@@ -38,7 +51,7 @@ export default function FundManagementPage() {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center sm:text-left">
         <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-2">Available Funds</h2>
         <div className="text-5xl font-light text-gray-900">
-          ${investor.totalBalance.toLocaleString()}
+          R{investor.totalBalance.toLocaleString()}
         </div>
       </div>
 
